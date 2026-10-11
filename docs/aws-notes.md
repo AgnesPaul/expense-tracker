@@ -246,11 +246,157 @@ Phases 3–7 and cost you an hour of confused debugging).
 
 ---
 
+# Phase 3 — EC2: your first server
+
+## What EC2 is
+
+AWS owns warehouses of physical servers, each sliced into many **virtual
+machines**. You rent one slice. It behaves exactly like a real computer —
+own OS, memory, disk, network address — while sharing hardware with strangers
+who cannot see you. *Elastic* Compute Cloud: start one in 30 seconds, destroy
+it in 5.
+
+## Reading an instance type
+
+```
+t3.micro
+│ │  └── size: nano · micro · small · medium · large · xlarge…
+│ └──── generation (higher = newer, usually cheaper per unit of work)
+└────── family: "t" = burstable general purpose
+```
+
+The **t family** suits workloads that are mostly idle with occasional spikes —
+you bank CPU credits while idle and spend them during bursts. Other families:
+`m` balanced, `c` compute-heavy, `r` memory-heavy.
+
+## ⚠️ Stop vs Terminate vs Reboot
+
+| Action | Computer | Disk & files | Still paying? |
+|---|---|---|---|
+| **Reboot** | restarts | kept | yes — never stopped |
+| **Stop** | switched off | **kept** | only for the disk (~$0.02/day) |
+| **Terminate** | **destroyed forever** | **deleted** | no |
+
+**Stop** at the end of each session. **Terminate** has no undo.
+
+**The public IP changes when you stop and start.** It's borrowed, not owned.
+Phase 7 solves this properly — the load balancer gets a stable name and the
+servers hide behind it.
+
+## Security groups — four things that surprise people
+
+A security group is a firewall attached to a machine: a guard with a guest list.
+
+1. **The default is "nobody."** A new group allows zero inbound traffic. The
+   machine is unreachable until you write a rule.
+2. **Only "allow" rules exist.** There is no deny. Logic is simply: does any
+   rule permit this? No → dropped **silently**. A blocked connection doesn't
+   error, it hangs until timeout — which looks identical to a broken server.
+   **Most "my server isn't responding" problems in AWS are a missing SG rule.**
+3. **It's stateful.** Let a visitor in on port 80 and the reply flows back
+   automatically, no outbound rule needed. So you only ever think about inbound.
+4. **A source can be another security group** ← the important one. Instead of
+   an IP, a rule can say "anything belonging to that group." Used in Phases 4
+   and 7, where server addresses change constantly but group membership doesn't.
+
+## Route tables vs security groups
+
+| | Route table | Security group |
+|---|---|---|
+| Answers | Where may traffic *travel*? | Who may come *through the door*? |
+| Attached to | A subnet | A machine |
+| Remembers connections? | n/a | **Yes** |
+
+You need both. When something doesn't work, check both.
+
+*(A third layer, NACLs, sits at subnet level, is stateless, and is the only
+place deny rules exist. Rarely needed.)*
+
+## Amazon Linux 2023 setup
+
+Docker is packaged, but **two plugins are not** and must be installed by hand:
+
+```bash
+sudo dnf install -y docker git
+sudo systemctl enable --now docker
+sudo usermod -aG docker ec2-user        # then reconnect for it to apply
+
+sudo mkdir -p /usr/local/lib/docker/cli-plugins
+
+# Compose
+sudo curl -SL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64   -o /usr/local/lib/docker/cli-plugins/docker-compose
+
+# buildx — modern Compose refuses to build without it
+sudo curl -SL https://github.com/docker/buildx/releases/download/v0.38.0/buildx-v0.38.0.linux-amd64   -o /usr/local/lib/docker/cli-plugins/docker-buildx
+
+sudo chmod +x /usr/local/lib/docker/cli-plugins/*
+```
+
+`/usr/local/lib/docker/cli-plugins/` is simply where `docker` looks for
+subcommands. Drop an executable there and it becomes `docker <name>`.
+
+## Swap — required on t3.micro
+
+1 GB of RAM isn't enough to `npm install` and bundle a React app. Linux doesn't
+slow down gracefully when memory runs out; it **kills the biggest process** and
+reports `exit code 137`, which explains nothing.
+
+```bash
+sudo dd if=/dev/zero of=/swapfile bs=128M count=16   # 2 GB
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile && sudo swapon /swapfile
+echo '/swapfile swap swap defaults 0 0' | sudo tee -a /etc/fstab   # survives reboot
+```
+
+RAM is the desk — fast, small. Disk is the cupboard — slow, huge. Swap is
+permission to use the cupboard when the desk is full.
+
+## Gotchas we hit
+
+**`compose build requires buildx 0.17.0 or later`** — buildx not installed. See
+above. Note the GitHub `releases/latest/download/` shortcut doesn't work for
+buildx because its filename contains the version; you need the explicit tag.
+
+**Cloned repo was missing files** — a commit existed locally but was never
+pushed, so the server cloned an older state. `git log origin/main..HEAD` shows
+what hasn't been pushed.
+
+**`docker compose ps` returned an empty table** — Compose only looks at the
+directory you're standing in. Wrong directory, no containers. `docker ps -a`
+shows everything regardless, including crashed containers.
+
+**Browser "Connect" needs its own SG rule.** EC2 Instance Connect opens the
+session from *AWS's* service IPs, not your laptop. A rule allowing SSH from
+"My IP" alone will block the browser button. The Sydney range is
+`13.239.158.0/29` — find others in `https://ip-ranges.amazonaws.com/ip-ranges.json`
+under service `EC2_INSTANCE_CONNECT`.
+
+**Type `http://` explicitly** when visiting. Browsers assume https, and there's
+no certificate until Phase 6.
+
+## What's running
+
+```
+EC2 instance (10.0.1.x, public IP via IGW)
+└── Docker
+    ├── web  (nginx)     port 80 → serves React, proxies /api to api:3000
+    ├── api  (Node)      port 3000, talks to db:5432
+    └── db   (Postgres)  data on the instance's EBS volume
+```
+
+Two layers of networking, same idea at both levels: the **VPC network**
+(`10.0.1.x`) between AWS resources, and a **Docker bridge network** inside the
+instance where containers reach each other by service name.
+
+## Cost from here
+
+~**$0.45/day** while running — instance ~$0.32, public IPv4 ~$0.12.
+**Stop the instance when you finish for the day.**
+
+---
+
 # Coming up
 
-- **Phase 3** — EC2. ⚠️ **First phase that costs money.** Security groups
-  control *what's allowed through*; route tables control *where packets can
-  go*. The distinction trips everyone up.
 - **Phase 4** — RDS. Security groups referencing other security groups.
 - **Phase 5** — S3 + IAM roles. Why an instance profile beats an access key.
 - **Phase 6** — CloudFront. Why ACM can't certify an ALB hostname.

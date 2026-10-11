@@ -6,7 +6,11 @@ services:
       POSTGRES_PASSWORD: expense
       POSTGRES_DB: expense
     ports:
-      - "5432:5432"          # exposed so you can psql in while learning
+      # Bound to 127.0.0.1 so Postgres is reachable only from the machine
+      # itself, never from the network. On your laptop you can still
+      # `psql -h localhost`; on EC2 use `docker compose exec db psql`.
+      # Defence in depth: this holds even if a security group is widened.
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:

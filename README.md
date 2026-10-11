@@ -86,8 +86,8 @@ cd backend && npm run migrate
 - [x] **Phase 1** — local app, Docker Compose, CRUD + filters + dashboard
 - [x] **Phase 0** — AWS account (Free plan, new Builder Experience), $5 budget on unblended costs
 - [x] Phase 2 — VPC (4 subnets across 2 AZs, IGW, public/private route tables)
-- [ ] Phase 3 — EC2  ← **you are here** (first billable phase)
-- [ ] Phase 4 — RDS
+- [x] Phase 3 — EC2 + Docker, app live on the public internet
+- [ ] Phase 4 — RDS  ← **you are here**
 - [ ] Phase 5 — S3 + IAM (fills in the receipt routes)
 - [ ] Phase 6 — CloudFront + HTTPS (makes the PWA installable)
 - [ ] Phase 7 — ALB + Auto Scaling
