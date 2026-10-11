@@ -32,8 +32,17 @@ services:
       PORT: 3000
       # Phase 5. No AWS credentials here — the SDK gets temporary ones from
       # the instance's IAM role via the metadata service.
-      # When set, the app fetches the db password from Secrets Manager at boot
-      # using its IAM role, and no password exists on this machine at all.
+      # Connection details that are NOT secret — a hostname and a database
+      # name reveal nothing on their own, and the database is unreachable
+      # without credentials and the right security group anyway.
+      PGHOST: ${PGHOST:-}
+      PGPORT: ${PGPORT:-5432}
+      PGDATABASE: ${PGDATABASE:-}
+      # The part that IS secret. With this set, username and password are
+      # fetched from Secrets Manager at boot using the instance's IAM role,
+      # and no password exists on this machine at all.
+      # Note an RDS-managed secret contains only username and password —
+      # host/port/dbname must still come from the settings above.
       DB_SECRET_ID: ${DB_SECRET_ID:-}
       RECEIPTS_BUCKET: ${RECEIPTS_BUCKET:-}
       AWS_REGION: ${AWS_REGION:-ap-southeast-2}

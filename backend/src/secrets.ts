@@ -26,8 +26,10 @@ export async function loadDbCredentials(): Promise<void> {
 
   const secret = JSON.parse(res.SecretString) as Record<string, string | number>
 
-  // RDS-managed secrets always carry username and password; some also carry
-  // host/port/dbname. Anything absent stays as whatever the environment set.
+  // An RDS-managed secret (rds!db-...) contains ONLY username and password.
+  // Secrets you create by hand may also carry host/port/dbname. Anything
+  // absent here keeps whatever the environment already set — which is why
+  // PGHOST still has to be configured separately.
   if (secret.username) process.env.PGUSER = String(secret.username)
   if (secret.password) process.env.PGPASSWORD = String(secret.password)
   if (secret.host) process.env.PGHOST = String(secret.host)
