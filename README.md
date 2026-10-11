@@ -88,8 +88,8 @@ cd backend && npm run migrate
 - [x] Phase 2 — VPC (4 subnets across 2 AZs, IGW, public/private route tables)
 - [x] Phase 3 — EC2 + Docker, app live on the public internet
 - [x] Phase 4 — RDS (private subnets, SG chaining, Secrets Manager credentials)
-- [ ] Phase 5 — S3 + IAM  ← **you are here** (fills in the receipt routes)
-- [ ] Phase 6 — CloudFront + HTTPS (makes the PWA installable)
+- [x] Phase 5 — S3 + IAM role, receipts via pre-signed URLs, zero credentials
+- [ ] Phase 6 — CloudFront + HTTPS  ← **you are here** (makes the PWA installable)
 - [ ] Phase 7 — ALB + Auto Scaling
 - [ ] Phase 8 — CloudWatch
 - [ ] Phase 9 — CI/CD

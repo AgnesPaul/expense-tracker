@@ -516,9 +516,109 @@ match the source you're reading. Phase 9 removes this trap for good.
 
 ---
 
+# Phase 5 — S3 and IAM roles
+
+## S3 is not a disk
+
+| | A disk | S3 |
+|---|---|---|
+| How you use it | open, seek, write a few bytes | **PUT** a whole object, **GET** a whole object |
+| Folders | real directories | **fake** — just `/` in the key |
+| Capacity | fixed | effectively unlimited |
+| Durability | one disk | copied across several data centres |
+
+`receipts/7/photo.jpg` is not three nested folders — that entire string is the
+object's **key**. The console draws folders because people like folders.
+
+Bucket names are **globally unique across all of AWS**.
+
+**Block Public Access — leave all four on.** Publicly readable buckets are a
+famous breach category. Serve private objects with pre-signed URLs instead.
+
+## 🔑 IAM roles — why no credentials exist
+
+| | How it works | When it leaks |
+|---|---|---|
+| **Access key** | a copy of the key, written down on the server | anyone who finds it has access **forever**, until you rotate |
+| **IAM role** | "anything wearing this uniform may do X" | revoke the role and access stops **instantly** — there was never a key |
+
+An EC2 instance asks the **instance metadata service** at `169.254.169.254`
+(unreachable from anywhere else) who it is, and receives **temporary
+credentials** carrying an `Expiration` — valid a few hours, refreshed
+automatically, never written to disk.
+
+The AWS SDK checks there by itself, so application code contains **no key, no
+secret, no configuration**. Locally the same SDK falls back to `~/.aws`, so no
+dev/prod branching is needed either.
+
+See it yourself:
+
+```bash
+TOKEN=$(curl -sX PUT http://169.254.169.254/latest/api/token \
+  -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
+curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
+  http://169.254.169.254/latest/meta-data/iam/security-credentials/
+```
+
+## Least privilege, read literally
+
+```json
+{
+  "Effect": "Allow",
+  "Action": ["s3:PutObject", "s3:GetObject", "s3:DeleteObject"],
+  "Resource": "arn:aws:s3:::expense-receipts-2026/*"
+}
+```
+
+Three actions, one bucket. It cannot list buckets, create or delete the bucket,
+touch any other bucket, or do anything outside S3. **That is the entire blast
+radius if the app is compromised.**
+
+⚠️ `arn:...:bucket` is *the bucket*; `arn:...:bucket/*` is *the objects in it*.
+Different resources — a common cause of puzzling AccessDenied errors.
+`ListBucket` applies to the former, `GetObject` to the latter.
+
+## Pre-signed URLs
+
+The bucket stays private. The server generates a URL signed with its temporary
+credentials, valid for a set window (300s here). The browser fetches the object
+**directly from S3** — the file never passes through the app server.
+
+Test it: open the signed link, wait past the expiry, refresh. It dies.
+
+## ⚠️ IMDS hop limit — the container gotcha
+
+Every network packet carries a hop counter (TTL); each device that forwards it
+subtracts one, and at zero the packet is discarded. AWS stamps metadata
+responses with a hop limit of **1** on purpose, so credentials physically
+cannot leave the instance.
+
+**Docker's bridge counts as a hop.** So from inside a container the response
+dies in transit and the SDK reports "could not load credentials" with no
+explanation.
+
+Fix: **EC2 → Instance → Actions → Instance settings → Modify instance metadata
+options → Response hop limit 1 → 2.**
+
+This is the documented fix (ECS and EKS set 2 automatically) but it is a real,
+if small, tradeoff — you have widened what can reach those credentials.
+
+## Implementation notes
+
+Uploads stream from memory straight to S3 and **never touch the instance's
+disk** — that is what keeps the server stateless for Phase 7. Capped at 5 MB,
+images and PDFs only. Replacing a receipt deletes the previous object rather
+than orphaning it.
+
+## Cost
+
+Effectively **$0** at this scale. Storage ~$0.025/GB/month; a handful of
+receipt images is fractions of a cent.
+
+---
+
 # Coming up
 
-- **Phase 5** — S3 + IAM roles. Why an instance profile beats an access key.
 - **Phase 6** — CloudFront. Why ACM can't certify an ALB hostname.
 - **Phase 7** — ALB + Auto Scaling. Health checks and self-healing.
 - **Phase 8** — CloudWatch. Logs vs metrics vs alarms.
