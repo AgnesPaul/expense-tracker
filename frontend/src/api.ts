@@ -30,4 +30,19 @@ export const api = {
   update: (id: number, body: ExpenseInput) =>
     req<Expense>(`/expenses/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
   remove: (id: number) => req<void>(`/expenses/${id}`, { method: 'DELETE' }),
+
+  // FormData must NOT get an explicit Content-Type — the browser sets it along
+  // with the multipart boundary, and overriding it breaks the upload.
+  uploadReceipt: async (id: number, file: File) => {
+    const body = new FormData()
+    body.append('file', file)
+    const res = await fetch(`${BASE}/api/expenses/${id}/receipt`, { method: 'POST', body })
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}))
+      throw new Error((e as { error?: string }).error ?? 'upload failed')
+    }
+  },
+
+  // Returns a short-lived signed link; the bucket itself stays private.
+  receiptUrl: (id: number) => req<{ url: string; expires_in: number }>(`/expenses/${id}/receipt`),
 }

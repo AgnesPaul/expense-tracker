@@ -84,6 +84,30 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
+  async function uploadReceipt(id: number, file: File | undefined) {
+    if (!file) return
+    setBusy(true)
+    try {
+      await api.uploadReceipt(id, file)
+      await refresh()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'upload failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function viewReceipt(id: number) {
+    try {
+      const { url } = await api.receiptUrl(id)
+      // Opens the object straight from S3 using a signed link valid for a few
+      // minutes. Nothing in the bucket is public.
+      window.open(url, '_blank', 'noopener')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'could not open receipt')
+    }
+  }
+
   async function remove(id: number) {
     if (!confirm('Delete this expense?')) return
     try {
@@ -205,6 +229,19 @@ export default function App() {
                   </div>
                 </div>
                 <span className="li-amt">{money(x.amount)}</span>
+                {x.has_receipt ? (
+                  <button className="link" onClick={() => viewReceipt(x.id)} title="View receipt">
+                    Receipt
+                  </button>
+                ) : (
+                  <label className="link" style={{ cursor: 'pointer' }} title="Attach a receipt">
+                    + Receipt
+                    <input
+                      type="file" hidden accept="image/*,application/pdf" disabled={busy}
+                      onChange={(e) => uploadReceipt(x.id, e.target.files?.[0])}
+                    />
+                  </label>
+                )}
                 <button className="link" onClick={() => startEdit(x)}>Edit</button>
                 <button className="link danger" onClick={() => remove(x.id)}>Delete</button>
               </li>

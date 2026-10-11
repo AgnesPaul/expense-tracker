@@ -30,6 +30,10 @@ services:
       DATABASE_URL: ${DATABASE_URL-postgres://expense:expense@db:5432/expense}
       PGSSL: "${PGSSL:-false}"
       PORT: 3000
+      # Phase 5. No AWS credentials here — the SDK gets temporary ones from
+      # the instance's IAM role via the metadata service.
+      RECEIPTS_BUCKET: ${RECEIPTS_BUCKET:-}
+      AWS_REGION: ${AWS_REGION:-ap-southeast-2}
       # Phase 7: set this to "true" and restart to watch the ALB drain the target.
       FORCE_UNHEALTHY: "${FORCE_UNHEALTHY:-false}"
     # Read verbatim, with no ${} interpolation — which is exactly why a
