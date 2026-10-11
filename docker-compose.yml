@@ -25,13 +25,18 @@ services:
   api:
     build: ./backend
     environment:
-      # Defaults to the local container; the server overrides both of these
-      # in its .env to point at RDS. Same image, different environment.
-      DATABASE_URL: ${DATABASE_URL:-postgres://expense:expense@db:5432/expense}
+      # Defaults to the local container. On EC2 this is left unset and
+      # db.env supplies PGHOST/PGUSER/PGPASSWORD/PGDATABASE instead.
+      DATABASE_URL: ${DATABASE_URL-postgres://expense:expense@db:5432/expense}
       PGSSL: "${PGSSL:-false}"
       PORT: 3000
       # Phase 7: set this to "true" and restart to watch the ALB drain the target.
       FORCE_UNHEALTHY: "${FORCE_UNHEALTHY:-false}"
+    # Read verbatim, with no ${} interpolation — which is exactly why a
+    # generated password with $ or # in it is safe here but not in .env.
+    env_file:
+      - path: ./db.env
+        required: false
     ports:
       # Localhost-only, same reasoning as the db service above. nginx reaches
       # the API as api:3000 over Docker's internal network and never uses this

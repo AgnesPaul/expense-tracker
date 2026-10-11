@@ -4,7 +4,15 @@
 // with no code change at all.
 export const config = {
   port: Number(process.env.PORT ?? 3000),
+
+  // Two ways to reach the database:
+  //   DATABASE_URL  — one connection string (convenient locally)
+  //   PGHOST/PGUSER/PGPASSWORD/PGDATABASE — discrete values
+  // The discrete form exists because a generated password can contain
+  // characters that are structural in a URL (# truncates it, @ splits it,
+  // / ends the host). Passing them separately sidesteps all escaping.
   databaseUrl: process.env.DATABASE_URL ?? '',
+  pgHost: process.env.PGHOST ?? '',
 
   // Phase 4: when set, credentials are pulled from Secrets Manager at boot
   // instead of being baked into DATABASE_URL.
@@ -19,6 +27,6 @@ export const config = {
   forceUnhealthy: process.env.FORCE_UNHEALTHY === 'true',
 }
 
-if (!config.databaseUrl && !config.dbSecretId) {
-  throw new Error('Set DATABASE_URL (or DB_SECRET_ID once you reach Phase 4)')
+if (!config.databaseUrl && !config.pgHost && !config.dbSecretId) {
+  throw new Error('Set DATABASE_URL, or PGHOST/PGUSER/PGPASSWORD/PGDATABASE')
 }

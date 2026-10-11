@@ -3,8 +3,10 @@ import { config } from './config'
 
 // A single shared pool. Note there is no local state beyond this connection —
 // the API stays stateless so two instances can sit behind a load balancer.
+// When no connectionString is given, node-postgres reads PGHOST, PGUSER,
+// PGPASSWORD, PGDATABASE and PGPORT from the environment by itself.
 export const pool = new Pool({
-  connectionString: config.databaseUrl,
+  ...(config.databaseUrl ? { connectionString: config.databaseUrl } : {}),
   max: 10,
   idleTimeoutMillis: 30_000,
   // RDS requires TLS but presents an Amazon CA; Phase 4 flips this on.
