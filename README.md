@@ -26,6 +26,7 @@ docker compose up -d --build
 
 | URL | What |
 |---|---|
+| https://d3e7irv07htoun.cloudfront.net | **Live site** — HTTPS via CloudFront |
 | http://localhost:8080 | The app, served by nginx with `/api/*` proxied to the backend |
 | (on EC2: port 80) | Set `WEB_PORT=80` in a server-side `.env` — see Phase 3 notes |
 | http://localhost:3000 | The API directly |
@@ -89,8 +90,8 @@ cd backend && npm run migrate
 - [x] Phase 3 — EC2 + Docker, app live on the public internet
 - [x] Phase 4 — RDS (private subnets, SG chaining, Secrets Manager credentials)
 - [x] Phase 5 — S3 + IAM role, receipts via pre-signed URLs, zero credentials
-- [ ] Phase 6 — CloudFront + HTTPS  ← **you are here** (makes the PWA installable)
-- [ ] Phase 7 — ALB + Auto Scaling
+- [x] Phase 6 — CloudFront + HTTPS, edge caching, PWA installable
+- [ ] Phase 7 — ALB + Auto Scaling  ← **you are here**
 - [ ] Phase 8 — CloudWatch
 - [ ] Phase 9 — CI/CD
 - [ ] Phase 10 — Terraform (`infra/`)

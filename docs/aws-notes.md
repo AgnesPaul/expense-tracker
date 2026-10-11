@@ -666,9 +666,153 @@ receipt images is fractions of a cent.
 
 ---
 
+# Phase 6 — CloudFront and HTTPS
+
+## HTTPS without owning a domain
+
+A certificate is an **ID card with a name on it**, and you can only get one for
+a name you own. You do not own `54.206.x.x`, so no certificate is possible for
+an IP address.
+
+CloudFront gives you a name **AWS owns** — `d3e7irv07htoun.cloudfront.net` —
+and AWS already holds a valid certificate for `*.cloudfront.net`. You borrow
+theirs. Real HTTPS, no domain purchase, no cost.
+
+⚠️ **Leave the domain field blank at creation.** Filling it in makes CloudFront
+try to provision a certificate for a name you would have to prove you own.
+
+Set **Viewer protocol policy: Redirect HTTP to HTTPS** so plaintext arrivals
+are bounced before any data moves.
+
+**Browsers refuse to install a PWA over HTTP** — this phase is what makes
+"Add to Home Screen" possible.
+
+## Cache behaviors — one origin, different rules per path
+
+A behavior is a rule matched by URL path. CloudFront reads them **top to
+bottom and uses the first match**, so `Default (*)` must always be last.
+
+| Precedence | Path | Methods | Cache policy | Origin request policy |
+|---|---|---|---|---|
+| 0 | `/api/*` | **all** | **CachingDisabled** | **AllViewerExceptHostHeader** |
+| 1 | `Default (*)` | GET, HEAD | CachingOptimized | None |
+
+**All methods on `/api/*`** — a POST is rejected at the edge otherwise; the
+origin never hears about it.
+
+**AllViewerExceptHostHeader** — CloudFront strips most headers, cookies and
+query strings by default. Without this, `?month=2026-10` vanishes and filters
+silently stop working.
+
+**Single origin for UI and API means CORS cannot arise.** Not configured
+around — it never comes up.
+
+## 🔑 Caching, properly
+
+Each of 400+ edge locations is a **corner shop**; the origin is the warehouse.
+Shop has it on the shelf → `x-cache: Hit`. Doesn't → orders from the warehouse,
+serves it, and keeps a copy → `x-cache: Miss`.
+
+Each edge stocks its own shelf independently, so a Miss at a fresh location is
+normal.
+
+| Content | Analogy | Cache? |
+|---|---|---|
+| Hashed JS/CSS | **tinned food** — never changes | forever |
+| `index.html` | same name every build | **never** |
+| API responses | **personal mail** | **never** |
+
+Caching an API response is a **correctness bug**, not just staleness: you would
+serve one person's data to another.
+
+### A cache policy defines two things
+
+1. **How long to keep** — CachingOptimized: default TTL 1 day, max 1 year.
+   Used only when the origin sends no `Cache-Control`; otherwise the origin's
+   label wins, clamped to those bounds.
+2. **The cache key — what counts as "the same request."** CachingOptimized
+   builds it from **the URL path only**, ignoring query strings, cookies and
+   headers, so every viewer worldwide shares one copy.
+
+That second part is why it must never touch an API:
+
+```
+GET /api/expenses?month=2026-10   → key "/api/expenses"
+GET /api/expenses?month=2026-09   → key "/api/expenses"   ← same key!
+```
+
+"Optimized" means optimised for **hit ratio**, not correctness.
+
+### Two layers, easy to confuse
+
+- **Cache policy** — the shop's general rule, set in CloudFront
+- **`Cache-Control`** — the expiry label on each item, set by the origin
+
+CachingOptimized means "keep things **and read the label**." Which is why the
+origin has to send labels at all.
+
+### The hashed-filename trick
+
+Vite writes `index-Bdiqe9lm.js`. Change the content and the **filename**
+changes, so the stale copy is simply never requested again — safe to cache for
+a year with no invalidation, ever.
+
+`index.html` cannot be hashed (it is what the browser asks for by name), and it
+*points at* the hashed files. Cache it and visitors load an old page referencing
+assets that no longer exist — a blank screen, and the classic broken deploy.
+
+```nginx
+location /assets/     { add_header Cache-Control "public, max-age=31536000, immutable"; }
+location = /index.html { add_header Cache-Control "no-cache"; }
+location = /sw.js      { add_header Cache-Control "no-cache, no-store, must-revalidate"; }
+```
+
+### Measured
+
+| Request for the same asset | Time |
+|---|---|
+| 1st (Miss — went to Sydney) | 1.41s |
+| 2nd (Hit — from the edge) | **0.17s** |
+
+## Gotchas
+
+**Custom VPCs have DNS hostnames disabled.** The default VPC has them on; one
+you build yourself does not — so an instance gets a public IP but **no public
+DNS name**, and CloudFront will not accept a bare IP as an origin.
+Fix: **VPC → Edit VPC settings → Enable DNS hostnames.**
+
+**Origin protocol must be HTTP only.** The instance has no certificate of its
+own, so an HTTPS origin connection fails with 502.
+
+**"Billing: Missing permissions"** in the CloudFront console is cosmetic — the
+project identity cannot read billing APIs. The distribution is unaffected.
+
+**Do not enable WAF** at creation — ~$5/month minimum plus per-request charges.
+
+## What is better, and what is not
+
+Better: encrypted browser↔CloudFront, PWA installable, distant users served
+locally, CORS structurally impossible.
+
+Still imperfect:
+- **CloudFront → EC2 is still plaintext.** The exposed hop moved from the
+  public internet into AWS's network — an improvement, not a fix.
+- **The EC2 instance is still directly reachable** by IP, bypassing CloudFront
+  entirely. (A secret custom header plus an nginx check is the usual fix.)
+- **Stopping the instance changes its DNS name**, breaking the origin.
+
+Phase 7's load balancer addresses all three: a stable name, a real certificate,
+and instances with no public address at all.
+
+## Cost
+
+CloudFront's always-free tier covers **1 TB out and 10M requests per month**.
+This phase adds **$0**.
+
+---
+
 # Coming up
 
-- **Phase 6** — CloudFront. Why ACM can't certify an ALB hostname.
 - **Phase 7** — ALB + Auto Scaling. Health checks and self-healing.
 - **Phase 8** — CloudWatch. Logs vs metrics vs alarms.
 - **Phase 9** — CI/CD with OIDC, no long-lived keys.
