@@ -27,7 +27,10 @@ services:
       # Phase 7: set this to "true" and restart to watch the ALB drain the target.
       FORCE_UNHEALTHY: "${FORCE_UNHEALTHY:-false}"
     ports:
-      - "3000:3000"
+      # Localhost-only, same reasoning as the db service above. nginx reaches
+      # the API as api:3000 over Docker's internal network and never uses this
+      # published port; it exists so you can curl localhost:3000 on a laptop.
+      - "127.0.0.1:3000:3000"
     depends_on:
       db:
         condition: service_healthy
