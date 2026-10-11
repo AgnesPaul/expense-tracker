@@ -1,0 +1,42 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: expense
+      POSTGRES_PASSWORD: expense
+      POSTGRES_DB: expense
+    ports:
+      - "5432:5432"          # exposed so you can psql in while learning
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U expense"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+
+  api:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgres://expense:expense@db:5432/expense
+      PORT: 3000
+      # Phase 7: set this to "true" and restart to watch the ALB drain the target.
+      FORCE_UNHEALTHY: "${FORCE_UNHEALTHY:-false}"
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    # Migrations run on boot here for convenience. In Phase 4 you run them by
+    # hand against RDS, which is why they live in a script and not in initdb.
+    command: sh -c "node dist/migrate.js && node dist/index.js"
+
+  web:
+    build: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
