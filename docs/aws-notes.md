@@ -395,9 +395,129 @@ instance where containers reach each other by service name.
 
 ---
 
+# Phase 4 — RDS: a managed database
+
+## Why move the database off the app server
+
+| | Postgres in a container | RDS |
+|---|---|---|
+| Backups | **none** | automatic + point-in-time recovery |
+| Patching | you | AWS |
+| Hardware failure | data gone | restore from backup; optional standby AZ |
+| Survives the app server dying | ❌ | ✅ different machine entirely |
+| Shared by multiple app servers | ❌ | ✅ — the reason Phase 7 works |
+
+The trade: **no shell access.** There is no OS to log into. You talk to it only
+as a database. You lose the ability to tinker and stop being responsible for it.
+
+## Two prerequisites RDS insists on
+
+**DB subnet group** — a named list of subnets RDS may use. Must span **at least
+two AZs**, even for a single-AZ database, because it needs somewhere to fail
+over *to* if that is ever enabled. This is the Phase 2 two-AZ requirement
+arriving.
+
+Point it at the **db** subnets only. A database in a public subnet would have a
+route to the internet — the thing the whole layout exists to prevent.
+
+**Security group** — see below.
+
+## 🔑 Security groups referencing security groups
+
+The obvious rule names an address:
+
+> allow 5432 from `10.0.1.47`
+
+It works until the server is replaced and gets a new address — which, from
+Phase 7 onward, happens automatically and constantly.
+
+The AWS rule names a **group**:
+
+> allow 5432 from `expense-server-sg`
+
+| | How it works | When servers change |
+|---|---|---|
+| Guest list of names | "let in Ravi, let in Priya" | rewrite the list every time |
+| **Check for a badge** | "anyone wearing the staff badge" | **nothing changes** |
+
+A new server launches wearing `expense-server-sg` → the database accepts it
+immediately. The old one is destroyed → its access goes with it. The rule
+describes a *relationship between roles*, not a list of machines. **This is why
+auto-scaling is possible at all.**
+
+## Managed credentials in Secrets Manager
+
+Choosing **Manage master credentials in AWS Secrets Manager** at creation means
+AWS generates the password, encrypts it with KMS, stores it, and can rotate it.
+You never see it, type it, or save it — so it cannot end up in a repo, a shell
+history, or a screenshot.
+
+The secret appears in Secrets Manager named `rds!db-<uuid>`.
+
+## AWS KMS in one paragraph
+
+Encryption is easy; **key custody** is the hard part. KMS is a vault holding
+keys that can never be exported — you hand it data and ask it to encrypt or
+decrypt, it checks your IAM permissions, and logs every use. So "who can read
+this data" becomes an IAM question you can grant, revoke and audit.
+
+*Envelope encryption*: KMS doesn't encrypt your 20 GB. It generates a one-off
+data key, encrypts *that*, and your data is encrypted locally with it. The vault
+only ever handles tiny keys while protecting unlimited data.
+
+AWS-managed keys (`aws/secretsmanager`, `aws/rds`) are free. Customer-managed
+keys cost ~$1/month and buy policy control you rarely need.
+
+## Settings worth knowing
+
+| Setting | Choice | Why |
+|---|---|---|
+| Creation method | **Full configuration** | Express hides VPC/subnet/SG choices |
+| Engine | **Amazon RDS**, not Aurora | Aurora costs several times more and is AWS-specific |
+| Public access | **No** | |
+| Security group | `expense-db-sg`, **remove `default`** | the form adds `default` silently |
+| Initial database name | **`expense`** | ⚠️ blank = a server with no database in it |
+| Storage autoscaling | **off** | grows the bill silently |
+| RDS Proxy | **off** | ~$0.72/day — more than the database. The app already pools |
+| Deletion protection | **off** | you must delete this in Phase 11 |
+| Certificate authority | default | |
+
+## Gotchas we hit
+
+**Free plan caps backup retention.** 7 days was rejected with *"exceeds the
+maximum available to free tier customers"*. 1 day works. The Free plan doesn't
+only cap spending — it quietly limits settings too.
+
+**A generated password breaks a connection URL.** `postgres://user:pass@host/db`
+is parsed as a URL, so `#` truncates it, `@` splits it, `/` ends the host. The
+failure is `TypeError: Invalid URL` from `pg-connection-string`.
+
+Fix: pass credentials **discretely** — `PGHOST`, `PGUSER`, `PGPASSWORD`,
+`PGDATABASE`, `PGPORT`. node-postgres reads them from the environment when no
+connectionString is given. Nothing is parsed, so nothing can break.
+
+**`.env` interpolates `$`; `env_file` does not.** Compose substitutes `${...}`
+in `.env` values, so a password containing `$` is mangled. An `env_file:` entry
+is passed to the container **verbatim**. Put generated secrets there.
+
+**`${VAR-default}` vs `${VAR:-default}`** — with a colon, an empty value falls
+back to the default; without, set-but-empty stays empty. Use the no-colon form
+when "explicitly blank" must mean something.
+
+**`git pull` does not change a built image.** An image is a snapshot of the code
+*at build time*. After pulling on the server you must `docker compose up -d
+--build`, or you run old code against new config — and error messages won't
+match the source you're reading. Phase 9 removes this trap for good.
+
+## Cost
+
+~$0.55/day — `db.t4g.micro` ~$0.43, 20 GB storage ~$0.12.
+**Combined with EC2: ~$1/day.** RDS can be stopped for up to 7 days at a time.
+
+---
+
 # Coming up
 
-- **Phase 4** — RDS. Security groups referencing other security groups.
 - **Phase 5** — S3 + IAM roles. Why an instance profile beats an access key.
 - **Phase 6** — CloudFront. Why ACM can't certify an ALB hostname.
 - **Phase 7** — ALB + Auto Scaling. Health checks and self-healing.
