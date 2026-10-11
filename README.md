@@ -5,6 +5,9 @@ hosting end to end. **The app is the vehicle, not the product** — it gets buil
 deployed through a production-style AWS stack, studied, then deleted.
 
 Full phase-by-phase plan: `~/.claude/plans/glowing-booping-sparrow.md`
+Concepts and notes as we go: [`docs/aws-notes.md`](docs/aws-notes.md)
+
+**Region:** `ap-southeast-2` (Sydney) · **Account:** AWS Free plan, no charges possible
 
 ## Stack
 
@@ -24,6 +27,7 @@ docker compose up -d --build
 | URL | What |
 |---|---|
 | http://localhost:8080 | The app, served by nginx with `/api/*` proxied to the backend |
+| (on EC2: port 80) | Set `WEB_PORT=80` in a server-side `.env` — see Phase 3 notes |
 | http://localhost:3000 | The API directly |
 | http://localhost:3000/health | What the ALB will poll in Phase 7 |
 | localhost:5432 | Postgres (`expense` / `expense` / `expense`) |
@@ -80,9 +84,9 @@ cd backend && npm run migrate
 ## Phase status
 
 - [x] **Phase 1** — local app, Docker Compose, CRUD + filters + dashboard
-- [ ] **Phase 0** — AWS account, budget, billing alarm *(do before anything billable)*
-- [ ] Phase 2 — VPC
-- [ ] Phase 3 — EC2
+- [x] **Phase 0** — AWS account (Free plan, new Builder Experience), $5 budget on unblended costs
+- [x] Phase 2 — VPC (4 subnets across 2 AZs, IGW, public/private route tables)
+- [ ] Phase 3 — EC2  ← **you are here** (first billable phase)
 - [ ] Phase 4 — RDS
 - [ ] Phase 5 — S3 + IAM (fills in the receipt routes)
 - [ ] Phase 6 — CloudFront + HTTPS (makes the PWA installable)
