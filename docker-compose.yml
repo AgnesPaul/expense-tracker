@@ -32,6 +32,9 @@ services:
       PORT: 3000
       # Phase 5. No AWS credentials here — the SDK gets temporary ones from
       # the instance's IAM role via the metadata service.
+      # When set, the app fetches the db password from Secrets Manager at boot
+      # using its IAM role, and no password exists on this machine at all.
+      DB_SECRET_ID: ${DB_SECRET_ID:-}
       RECEIPTS_BUCKET: ${RECEIPTS_BUCKET:-}
       AWS_REGION: ${AWS_REGION:-ap-southeast-2}
       # Phase 7: set this to "true" and restart to watch the ALB drain the target.

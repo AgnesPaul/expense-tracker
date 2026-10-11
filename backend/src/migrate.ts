@@ -3,11 +3,15 @@
 // having it as a script rather than relying on Postgres' initdb hook.
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { pool } from './db'
+import { loadDbCredentials } from './secrets'
 
 const dir = join(__dirname, '..', 'migrations')
 
 async function main() {
+  // Same ordering requirement as the server: credentials first, then the pool.
+  await loadDbCredentials()
+  const { pool } = await import('./db')
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       filename   TEXT PRIMARY KEY,
