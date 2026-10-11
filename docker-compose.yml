@@ -1,5 +1,8 @@
 services:
   db:
+    # Opt-in: only starts with `docker compose --profile localdb up`.
+    # On EC2 the database is RDS, so this container isn't started at all.
+    profiles: ["localdb"]
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: expense
@@ -22,7 +25,10 @@ services:
   api:
     build: ./backend
     environment:
-      DATABASE_URL: postgres://expense:expense@db:5432/expense
+      # Defaults to the local container; the server overrides both of these
+      # in its .env to point at RDS. Same image, different environment.
+      DATABASE_URL: ${DATABASE_URL:-postgres://expense:expense@db:5432/expense}
+      PGSSL: "${PGSSL:-false}"
       PORT: 3000
       # Phase 7: set this to "true" and restart to watch the ALB drain the target.
       FORCE_UNHEALTHY: "${FORCE_UNHEALTHY:-false}"
@@ -34,6 +40,7 @@ services:
     depends_on:
       db:
         condition: service_healthy
+        required: false
     # Migrations run on boot here for convenience. In Phase 4 you run them by
     # hand against RDS, which is why they live in a script and not in initdb.
     command: sh -c "node dist/migrate.js && node dist/index.js"
