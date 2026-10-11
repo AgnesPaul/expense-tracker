@@ -610,6 +610,55 @@ disk** — that is what keeps the server stateless for Phase 7. Capped at 5 MB,
 images and PDFs only. Replacing a receipt deletes the previous object rather
 than orphaning it.
 
+## Using the same role for more than S3
+
+A role is a uniform; the policy is the sentence describing what it permits.
+Add statements and the uniform does more:
+
+| Permission | Lets the server | Phase |
+|---|---|---|
+| `secretsmanager:GetSecretValue` | read the db password itself | 5 |
+| `logs:PutLogEvents` | ship logs to CloudWatch | 8 |
+| `ecr:BatchGetImage` | pull private Docker images | 9 |
+| `AmazonSSMManagedInstanceCore` (managed) | be deployed to remotely | 9 |
+| `rds-db:connect` | connect with **no password at all** | — |
+
+And roles are not only for EC2. The **trusted entity** decides who may wear the
+uniform: an EC2 instance, a Lambda, an ECS task, another AWS account, or an
+external identity provider. That last one is how Phase 9 lets GitHub Actions
+deploy with **no AWS keys stored in the repo**.
+
+> The pattern generalises: wherever you would be tempted to store an AWS key,
+> there is a role that removes the need for one.
+
+## Removing the last password on disk
+
+With `DB_SECRET_ID` set, the app fetches the RDS username and password from
+Secrets Manager at startup using its IAM role. The password then exists
+**nowhere on the machine** — not in a file, an image, or an environment
+variable. Rotating it needs a restart, not a redeploy.
+
+**Split config by sensitivity:**
+
+| Plainly in config | From Secrets Manager |
+|---|---|
+| host, port, database name | **username, password** |
+
+A hostname is not a secret: it resolves to a private address that doesn't exist
+outside the VPC, and the database refuses anyone lacking both credentials and
+the right security group.
+
+**⚠️ An RDS-managed secret (`rds!db-...`) contains only `username` and
+`password`** — no host. Deleting the file that held `PGHOST` breaks the app
+even though the secret loads fine.
+
+**⚠️ Credentials must load before the pg Pool is constructed**, hence the
+dynamic `await import('./db')` in `index.ts` and `migrate.ts`.
+
+**⚠️ `!` in an interactive bash double-quoted string triggers history
+expansion**, mangling `rds!db-...`. Use a quoted heredoc — `<<'EOF'` — which
+takes every line literally. The same trick keeps `$` in a password safe.
+
 ## Cost
 
 Effectively **$0** at this scale. Storage ~$0.025/GB/month; a handful of
