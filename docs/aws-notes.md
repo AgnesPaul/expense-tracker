@@ -811,9 +811,255 @@ This phase adds **$0**.
 
 ---
 
+# Phase 7 — Load balancing and auto-scaling
+
+## An ALB is a fleet, not a machine
+
+There is no server to point at. AWS runs nodes **inside each subnet you give
+it**, scales them with traffic, and replaces failures invisibly. Hence the
+two-subnet requirement.
+
+Consequence: **an ALB has no fixed IP.** Its DNS name resolves to several
+addresses (one per AZ) which change over time, so you always refer to it **by
+name**. That is also what makes it a stable origin for CloudFront — the name
+outlives every server behind it.
+
+## Anatomy
+
+```
+Listener       "I accept HTTP on port 80"
+   │
+Rules          "/api/* → this group, everything else → that group"
+   │
+Target Group   a pool of servers + how to check they are alive
+   │
+Targets        the instances
+```
+
+Because an ALB reads HTTP, one ALB can serve many apps via path or host rules.
+Real systems run **one ALB with many rules**, not many ALBs — ALBs are the
+expensive part.
+
+## Choosing a load balancer
+
+| Type | Layer | Understands | For |
+|---|---|---|---|
+| **ALB** | 7 | HTTP — paths, headers, cookies | websites, APIs |
+| **NLB** | 4 | TCP/UDP only | extreme throughput, static IP, raw TCP |
+| **GWLB** | 3 | raw packets | inserting firewall/inspection appliances |
+| CLB | — | legacy (2009) | nothing; a tutorial suggesting it is ~8 years stale |
+
+An NLB cannot route by URL path — it never reads the URL.
+
+## Health checks
+
+| Setting | Used | Meaning |
+|---|---|---|
+| Interval | 10s | how often to ask |
+| Timeout | 5s | how long to wait before calling it a failure |
+| Unhealthy threshold | 2 | **consecutive** failures before removal |
+| Healthy threshold | 2 | consecutive successes before return |
+
+Thresholds exist so one dropped packet does not eject a healthy server. Set
+them to 1 and targets flap.
+
+Unhealthy targets **stay registered** and keep being checked; they rejoin
+automatically on two passes. Nothing to restart.
+
+States: `initial` → `healthy` / `unhealthy` → `draining` → gone. `unused`
+means no listener points at the group.
+
+## Connection draining
+
+Deregistering stops **new** requests immediately but lets in-flight ones finish
+(deregistration delay, default **300s** — 30s is plenty for most apps).
+Meanwhile the instance gets `SIGTERM`.
+
+That pairs with the Phase 1 shutdown handler: the ALB stops sending work, the
+app finishes what it holds and exits. **Both halves are required** for a deploy
+nobody notices.
+
+## 🔑 Security group vs target group
+
+Confusingly similar names, completely unrelated things.
+
+| | Security group | Target group |
+|---|---|---|
+| What | a **firewall** | a **list of servers** + health policy |
+| Attached to | one resource | used by a load balancer |
+| Answers | "may this traffic enter?" | "where do I send this?" |
+| Health checks | ❌ | ✅ |
+| When wrong | traffic blocked → **timeout** | traffic sent nowhere |
+
+**The target group reports the symptom; the security group is usually the
+cause.** An unhealthy target is where you notice a problem and almost never
+where you fix it.
+
+## 🔑 Inbound vs outbound — who *starts* the conversation
+
+Stateful means **replies are free**. Rules only govern who may *begin* a
+conversation.
+
+```
+visitor ──▶ ALB     visitor starts    → ALB INBOUND
+ALB ────▶ visitor   reply             → automatic
+ALB ────▶ EC2       the ALB starts    → ALB OUTBOUND   ← the health check
+EC2 ────▶ ALB       reply             → automatic
+```
+
+**A health check is not a reply.** It is a new connection the ALB opens every
+10 seconds on its own, so the **ALB's outbound rules** govern it.
+
+### ⚠️ The bug that cost an hour
+
+Target showed `Target.Timeout`. The instance's inbound rules were correct —
+port 80 open from `0.0.0.0/0` **and** from the ALB's group. The cause was
+`expense-alb-sg` having **no outbound rules at all**, so the health check never
+left. AWS adds "all traffic out" to new security groups by default; it had been
+cleared.
+
+> **When two AWS resources time out, check both ends: inbound on the receiver
+> AND outbound on the sender.**
+
+### Which outbound rules to tighten
+
+| | Reaches | Tighten? |
+|---|---|---|
+| **ALB** | only its targets | ✅ one rule describes everything it does |
+| **RDS** | nothing — it only replies | ✅ can be emptied entirely |
+| **EC2** | Docker Hub, GitHub, repos, Secrets Manager, S3, DNS… | ❌ impractical, breaks deploys |
+
+> Tighten outbound where the destination list is small and stable. Leave it
+> open where it is not. Real egress filtering happens at the VPC level
+> (NAT + proxy), not in security group rules.
+
+## AMI — a photograph of a disk
+
+Every new machine is born as a copy. Yours holds the OS, Docker + plugins,
+swap, the repo, `.env`, built images and restart policies.
+
+**Not in the AMI** (machine settings, not disk contents) — must be set in the
+launch template:
+
+- **IAM instance profile** — without it, no Secrets Manager → no DB password
+- **IMDS hop limit `2`** — without it, containers cannot fetch credentials
+- Security group, instance type, subnet
+
+It is safe to bake this image **because Phase 5 removed the password from
+disk** — `.env` holds only a hostname and a secret *name*.
+
+### Baked image vs configure-at-boot
+
+| | Baked AMI | User-data script |
+|---|---|---|
+| Boot | **~30s** | 3–10 min |
+| Depends on | nothing | GitHub/Docker Hub being up |
+| Changing it | rebuild the image | edit the script |
+
+A replacement server failing to start because GitHub is down is a terrible
+property when it is replacing one that just died. Real systems **bake the slow
+stable layer and script the fast-changing one**.
+
+An AMI is really EBS snapshots plus metadata — which is why launching is fast,
+and why **deleting an AMI does not delete its snapshots**. Orphaned snapshots
+cost money forever (see Phase 11).
+
+## Restart policies
+
+`restart: unless-stopped` so containers start when Docker starts — i.e. on
+boot. Without it a fresh ASG instance boots with Docker running and **no
+containers**, fails health checks, gets replaced, and loops forever.
+
+| Policy | Behaviour |
+|---|---|
+| `no` (default) | never restarts |
+| `on-failure` | only after a crash |
+| `always` | even one you stopped deliberately |
+| **`unless-stopped`** | restarts unless you stopped it on purpose |
+
+**Not universal.** Something must own restarts; the only question is what:
+
+| How you run it | Who restarts |
+|---|---|
+| Docker Compose on a VM | **the restart policy** ← here |
+| systemd wrapping Docker | `Restart=` |
+| **ECS / Kubernetes** | the scheduler — **remove the policy, it fights them** |
+| ASG | replaces the whole machine |
+
+⚠️ Never give a **one-shot job** (migration, batch import) `restart: always` —
+it loops forever.
+
+## Auto Scaling Group
+
+Registers every instance it creates into the **target group**, so the list
+changes while the load balancer stays still.
+
+| Setting | Value | Why |
+|---|---|---|
+| Subnets | **both** public | spread across AZs |
+| **ELB health checks** | **ON** | otherwise the ASG only notices a *crashed* machine, not a *broken app* |
+| Grace period | 180s | boot + Docker + RDS connect before checks count; too short = killed mid-startup |
+| Desired / min / max | 2 / 2 / 4 | |
+
+**The Activity tab** is the first place to look when an ASG misbehaves — every
+launch, termination and reason is logged there.
+
+## The two demos — measured
+
+**Terminate an instance outright.** ASG logged
+`Launching a new EC2 instance` within ~30s; replacement healthy in ~3 min.
+
+**Break the app, not the machine** (`FORCE_UNHEALTHY=true` → `/health` returns
+503). This is the failure an ASG alone cannot see: OS fine, CPU normal, app
+wrong.
+
+```
+app reports unhealthy
+   → ALB stops routing to it          ~20s   (users protected)
+   → ASG accepts the ALB's verdict
+   → terminates the machine
+   → rebuilds from the AMI, which never had the flag
+```
+
+> *"an instance was taken out of service in response to an ELB system health
+> check failure"* — the ASG's own log line.
+
+**50 of 50 requests returned 200 across both demos. Zero failed requests.**
+
+Two independent systems, one job each: the **ALB** protects users now by
+routing around the problem; the **ASG** fixes the cause by replacing the
+machine. Neither needs the other, and neither needs a human.
+
+None of it works without the Phase 1 decisions: **stateless**, so any server
+can serve any request; and **a real `/health`**, so "running" can be
+distinguished from "working".
+
+## Gotchas
+
+**502 from a fresh instance** = nginx is up, the api is not *yet*. nginx is
+ready in ~2s, the api in ~20–40s (fetch secret → connect RDS → migrate). A
+transient 502 during startup is correct behaviour, not a fault.
+
+**`~` is whoever you currently are.** As root it is `/root`, not
+`/home/ec2-user`. Use absolute paths on a server.
+
+**Deregistering shows `draining` for up to 300s.** Expected, not stuck.
+
+## Pets vs cattle
+
+A **pet** is a server with a name you would nurse back to health. **Cattle** are
+interchangeable and replaced without ceremony. This phase converted one pet into
+two cattle.
+
+## Cost
+
+ALB ~**$0.55/day** — the most expensive single thing here, and the first to
+delete in Phase 11. Two instances + RDS + ALB ≈ **$1.55/day**.
+
+---
+
 # Coming up
 
-- **Phase 7** — ALB + Auto Scaling. Health checks and self-healing.
 - **Phase 8** — CloudWatch. Logs vs metrics vs alarms.
 - **Phase 9** — CI/CD with OIDC, no long-lived keys.
 - **Phase 10** — Terraform.
