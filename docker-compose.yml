@@ -4,6 +4,7 @@ services:
     # On EC2 the database is RDS, so this container isn't started at all.
     profiles: ["localdb"]
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: expense
       POSTGRES_PASSWORD: expense
@@ -24,6 +25,10 @@ services:
 
   api:
     build: ./backend
+    # Start automatically when the Docker daemon starts — which means on boot.
+    # Phase 7 needs this: an Auto Scaling Group launches a fresh instance from
+    # an AMI and nobody is there to type "docker compose up".
+    restart: unless-stopped
     environment:
       # Defaults to the local container. On EC2 this is left unset and
       # db.env supplies PGHOST/PGUSER/PGPASSWORD/PGDATABASE instead.
@@ -68,6 +73,7 @@ services:
 
   web:
     build: ./frontend
+    restart: unless-stopped
     ports:
       - "${WEB_PORT:-8080}:80"
     depends_on:
