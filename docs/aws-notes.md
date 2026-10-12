@@ -1058,9 +1058,119 @@ delete in Phase 11. Two instances + RDS + ALB ≈ **$1.55/day**.
 
 ---
 
+# Phase 8 — CloudWatch (part 1: metrics and alarms)
+
+## The problem auto-scaling created
+
+Instances are disposable now, so **the machine that had the error may already be
+destroyed**. Anything you need after an incident has to leave the machine.
+
+## Three separate things
+
+| | Answers | Shape |
+|---|---|---|
+| **Logs** | **what happened?** | text, one line per event |
+| **Metrics** | **how is it behaving?** | numbers over time |
+| **Alarms** | **when should a human be told?** | a rule on a metric |
+
+Shop version: logs are the diary, metrics are the gauges on the wall, alarms are
+the smoke detector.
+
+## Metrics you already had
+
+Every AWS service publishes metrics automatically, from the moment the resource
+exists. Nothing to configure.
+
+| Namespace | Useful |
+|---|---|
+| ApplicationELB | `RequestCount`, `TargetResponseTime`, `HTTPCode_Target_5XX_Count`, `UnHealthyHostCount`, `HealthyHostCount` |
+| EC2 | `CPUUtilization`, `NetworkIn` |
+| RDS | `DatabaseConnections`, `FreeStorageSpace` |
+| AutoScaling | `GroupInServiceInstances` |
+
+**Dimensions** are the labels that scope a measurement — "requests" is
+meaningless without "to what". The console's groupings (*Per AppELB*, *Per
+AppELB per TG*, *per AZ*) are dimension combinations of the same metrics.
+`UnHealthyHostCount` lives under **Per AppELB, per TG**.
+
+⚠️ Default graphing is **Average over 5 minutes**, which flattens short
+incidents — a 1-minute blip of value 1 shows as 0.2. Switch the Graphed metrics
+row to **Maximum / 1 minute** to see real spikes.
+
+## Alarm setup
+
+| Field | Value | Why |
+|---|---|---|
+| Metric | `UnHealthyHostCount` | |
+| Statistic | **Maximum** | Average hides one sick host among healthy ones |
+| Period | 1 minute | |
+| Condition | ≥ 1 | |
+| Action | SNS topic → email | |
+
+⚠️ **Confirm the SNS subscription email.** Until you click the link the
+subscription is `PendingConfirmation` and alarms deliver **nothing, silently**.
+Check **SNS → Topics → Subscriptions** says `Confirmed`. This is the most common
+reason an alarm "doesn't work".
+
+## 🔑 Measured: the detection window
+
+Breaking the app and sampling immediately gave **1 failed request out of 25**.
+Starting 30 seconds later gives a clean 25/25. The difference is the gap between
+breaking and the ALB noticing:
+
+```
+t=0    app breaks — ALB still routing to it
+t=10s  check #1 fails
+t=20s  check #2 fails → unhealthy → traffic stops
+```
+
+Up to 20 seconds where roughly half the requests (1 of 2 instances) fail.
+
+> **Health checks do not give zero downtime. They give *bounded* downtime** —
+> from "every request, forever" to "half the requests, for 20 seconds".
+
+```
+interval × unhealthy threshold = worst-case detection
+   10s   ×  2  = 20s   ← ours
+   30s   ×  3  = 90s   ← AWS default
+```
+
+Tempting to lower, but the cost is **false positives**: one GC pause ejects a
+healthy server, the ASG may terminate it, capacity drops — an outage caused by
+trying to prevent one. Production typically lands at 10–30s deliberately.
+
+What actually closes the gap: **graceful shutdown** (planned removals — which is
+why deploys are seamless even though failures are not) and **client retries**.
+
+## 🔑 Alarms are the slowest thing, by design
+
+| | Reacts in | Job |
+|---|---|---|
+| ALB health check | ~20s | protect users **now** |
+| ASG replacement | ~2 min | fix the cause |
+| **CloudWatch alarm** | **~2–5 min** | **tell a human** |
+
+CloudWatch publishes ELB metrics at 1-minute granularity and evaluates behind
+that. 2–5 minutes from break to email is normal.
+
+So **alarm on what a human must act on** — a disk filling, every instance
+failing, cost climbing. Alarming on things that self-heal trains you to ignore
+alerts.
+
+A corollary seen first-hand: **fast auto-remediation can outrun your alerting.**
+The ASG may resolve an incident before the alarm finishes evaluating, leaving
+almost no trace to study afterwards.
+
+## Still to do (part 2)
+
+Container logs still die with the instance. Shipping them to CloudWatch Logs
+needs: an IAM permission, the Docker `awslogs` driver in compose, a **new AMI**,
+and an **instance refresh** to roll it out.
+
+---
+
 # Coming up
 
-- **Phase 8** — CloudWatch. Logs vs metrics vs alarms.
 - **Phase 9** — CI/CD with OIDC, no long-lived keys.
 - **Phase 10** — Terraform.
 - **Phase 11** — Teardown and the cost post-mortem.

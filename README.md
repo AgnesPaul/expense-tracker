@@ -92,7 +92,7 @@ cd backend && npm run migrate
 - [x] Phase 5 — S3 + IAM role, receipts via pre-signed URLs, zero credentials
 - [x] Phase 6 — CloudFront + HTTPS, edge caching, PWA installable
 - [x] Phase 7 — ALB + Auto Scaling across 2 AZs, self-healing verified
-- [ ] Phase 8 — CloudWatch  ← **you are here**
+- [~] Phase 8 — CloudWatch: metrics + alarms done; log shipping pending  ← **you are here**
 - [ ] Phase 9 — CI/CD
 - [ ] Phase 10 — Terraform (`infra/`)
 - [ ] Phase 11 — Teardown + cost post-mortem
