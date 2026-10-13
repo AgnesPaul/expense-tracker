@@ -1,0 +1,31 @@
+# Overlay that ships container output to CloudWatch Logs.
+#
+# Not in the main compose file because the awslogs driver needs AWS credentials
+# and a real log group — fine on EC2 (the instance's IAM role provides them),
+# pointless on a laptop.
+#
+# The server opts in by setting this in its .env:
+#     COMPOSE_FILE=docker-compose.yml:docker-compose.logging.yml
+# after which plain `docker compose up -d` applies both files.
+#
+# ⚠️ Trade-off: with the awslogs driver, `docker compose logs` on the instance
+# returns NOTHING. Docker hands each line straight to CloudWatch and keeps no
+# local copy. That is the point — logs must outlive the machine — but it does
+# mean the console is the only place to read them.
+
+services:
+  api:
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${AWS_REGION:-ap-southeast-2}
+        awslogs-group: /expense/api
+        awslogs-create-group: "true"
+
+  web:
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${AWS_REGION:-ap-southeast-2}
+        awslogs-group: /expense/web
+        awslogs-create-group: "true"
